@@ -14,7 +14,22 @@ class OrganizationQuerySet(models.QuerySet):
 
         :type root_org_id: int
         """
-        return self.filter()
+        sql = """
+            WITH RECURSIVE children AS (
+                SELECT id
+                FROM orgunits_organization
+                WHERE orgunits_organization.id = %s
+                UNION
+                SELECT orgunits_organization.id
+                FROM orgunits_organization
+                INNER JOIN children
+                ON orgunits_organization.parent_id = children.id
+            )
+        SELECT * FROM children
+        """
+        result = RawSQL(sql, [root_org_id])
+
+        return self.filter(id__in=result)
 
     def tree_upwards(self, child_org_id):
         """
@@ -23,7 +38,21 @@ class OrganizationQuerySet(models.QuerySet):
 
         :type child_org_id: int
         """
-        return self.filter()
+        sql = """
+            WITH RECURSIVE parents(id) AS ( 
+                SELECT %s
+                UNION
+                SELECT parent_id
+                FROM orgunits_organization , parents
+                WHERE orgunits_organization.id = parents.id
+                ) 
+            SELECT id 
+            FROM orgunits_organization
+            WHERE orgunits_organization.id in parents
+            """
+        result = RawSQL(sql, [child_org_id])
+
+        return self.filter(id__in=result)
 
 
 class Organization(models.Model):
@@ -42,6 +71,9 @@ class Organization(models.Model):
         verbose_name_plural = "Организация"
         verbose_name = "Организации"
 
+    def __str__(self):
+        return f"{self.name}"
+
     def parents(self):
         """
         Возвращает всех родителей любого уровня вложенности
@@ -49,6 +81,8 @@ class Organization(models.Model):
 
         :rtype: django.db.models.QuerySet
         """
+        result = Organization.objects.tree_upwards(self.id)
+        return result.exclude(id=self.id)
 
     def children(self):
         """
@@ -57,3 +91,5 @@ class Organization(models.Model):
 
         :rtype: django.db.models.QuerySet
         """
+        result = Organization.objects.tree_downwards(self.id)
+        return result.exclude(id=self.id)
